@@ -30,18 +30,18 @@ from scipy.ndimage import distance_transform_edt
 root = Tk()
 root.withdraw()
 
-selected_file = filedialog.askopenfilename(
-    title="Select your input file"
-)
+folder_path = filedialog.askdirectory(title="Select the folder with masks")
+
+if folder_path:
+    print(f"Selected folder: {folder_path}")
+else:
+    raise SystemExit("No folder selected.")
 
 root.destroy()
 
-if not selected_file:
-    raise SystemExit("No file selected.")
-
 
 # Include selected file in parameter list, along with conversion specifications
-FOLDER = Path(selected_file)
+FOLDER = Path(folder_path)
 SPARSE = True
 FRACTION = 0.02  # fraction of eligible pixels per class
 MAX_PER_CLASS = 1000
