@@ -8,15 +8,52 @@ import tifffile
 from skimage.segmentation import find_boundaries
 
 
-def generate_compartment_masks(image_path=None, cell_labels_path=None, mito_prediction_path=None, *, overwrite=False):
+def load_experiment_metadata(metadata_path):
+    """Validate optional Step 1 metadata and return its portable directory and reference."""
+    if metadata_path is None:
+        return None, None
+    import math
+    path = Path(metadata_path).expanduser().resolve(strict=True)
+    if path.name != "metadata.json":
+        raise ValueError("Select the Step 1 metadata.json file.")
+    raw = path.read_bytes()
+    data = json.loads(raw.decode("utf-8-sig"))
+    vit, free = data["SPvit"], data["SPfree"]
+    if not all(type(v) in (int, float) and math.isfinite(v) for v in (vit, free)) or not 0 < vit < free:
+        raise ValueError("Invalid FPRM calibration standards.")
+    return path.parent, {"filename": path.name, "sha256": hashlib.sha256(raw).hexdigest()}
+
+
+def select_experiment_metadata():
+    """Offer metadata first; declining retains the original manual workflow."""
+    from tkinter import Tk, filedialog, messagebox
+    root = Tk()
+    root.withdraw()
+    try:
+        if not messagebox.askyesno("FPRM setup", "Use Step 1 metadata.json to locate the experiment images?", parent=root):
+            return None
+        path = filedialog.askopenfilename(parent=root, title="Select experiment metadata.json", filetypes=[("JSON files", "*.json")])
+        if not path:
+            raise SystemExit("Metadata selection cancelled.")
+        return path
+    finally:
+        root.destroy()
+
+
+def generate_compartment_masks(image_path=None, cell_labels_path=None, mito_prediction_path=None, *, metadata_path=None, overwrite=False):
+    if image_path is None and metadata_path is None:
+        metadata_path = select_experiment_metadata()
+    initial_dir, experiment_reference = load_experiment_metadata(metadata_path)
     if image_path is None:
         from tkinter import Tk, filedialog
         root=Tk(); root.withdraw()
-        try: image_path=filedialog.askopenfilename(title='Select I image')
+        try: image_path=filedialog.askopenfilename(title='Select I image', initialdir=str(initial_dir) if initial_dir else '')
         finally: root.destroy()
         if not image_path: return
     p=Path(image_path)
     if not p.name.startswith('I_') or p.suffix.lower() not in ('.tif','.tiff'): raise ValueError('Expected I TIFF')
+    if initial_dir is not None and p.resolve().parent != initial_dir:
+        raise ValueError("I image must be in the selected metadata directory.")
     b=p.stem[2:]
     lp=Path(cell_labels_path or p.with_name(f'FPRM_Step2_CellLabels_{b}.tif'))
     mp=Path(mito_prediction_path or p.with_name(f'FPRM_Step3_MitoPrediction_{b}.tif'))
@@ -43,7 +80,7 @@ def generate_compartment_masks(image_path=None, cell_labels_path=None, mito_pred
     overlay[mito]=np.rint(.6*rgb[mito]+.4*np.array([0,255,255])).astype(np.uint8)
     overlay[find_boundaries(labels,mode='inner')]=[255,255,0]
     tifffile.imwrite(outputs['SegmentationReview'],np.concatenate([rgb,overlay],axis=1),photometric='rgb')
-    meta.write_text(json.dumps(dict(schema_version='1.0',basename=b,processed_at=datetime.now(timezone.utc).isoformat(),
+    meta.write_text(json.dumps(dict(schema_version='1.0',experiment_metadata=experiment_reference,basename=b,processed_at=datetime.now(timezone.utc).isoformat(),
         inputs={f.name:hashlib.sha256(f.read_bytes()).hexdigest() for f in (p,lp,mp)},
         outputs={f.name:hashlib.sha256(f.read_bytes()).hexdigest() for f in outputs.values()},upstream=upstream,
         foreground_value=255,cytoplasm_definition='cell_minus_mito',manual_correction=False,

@@ -8,6 +8,8 @@ user = getInfo("user.name");
 // Limit between lower (vitrified) & upper (fast rotation) bounds.  Applied to Relative Free NADH values.
 pixel_lim_opt = 1;											// 0 to map grayscale 0-255 between SPvit & SPfree, 1 to map to defined limits, specified below
 User_pixel_lims = newArray(0.0, 0.6);						// If pixel_lim_option set to 1, uses this relative free NADH range for grayscale image colormap
+
+
 function ColorMap(RelativeFreeNADH_Measured, option, LimLow, LimHigh){
 	// If option for cmap limits is 0 (option==0), use [0.0, 1.0] as 0-255 gray value range
 	// If option==1, use user-defined limits as 0-255 gray value range
@@ -48,17 +50,43 @@ function ColorMap(RelativeFreeNADH_Measured, option, LimLow, LimHigh){
 run("Misc...", "divide=NaN run");     		// makes both x/0 and 0/0 = to NaN
 run("Conversions...", " ");					// If 8/16/32-bit images are converted, no scaling of values.  For handling Masks.
 
-Dialog.create("FPRM calibration standards");
-Dialog.addNumber("SPvit", 0.725, 3);
-Dialog.addNumber("SPfree", 0.975, 3);
+// Optional Step 1 experiment metadata, or manual calibration.
+Dialog.create("FPRM analysis setup");
+Dialog.addCheckbox("Use Step 1 metadata.json (load calibration standards and open the experiment folder)", true);
 Dialog.show();
-SPvit = Dialog.getNumber(); SPfree = Dialog.getNumber();
-if (isNaN(SPvit) || isNaN(SPfree) || SPvit<=0 || SPfree<=SPvit || SPfree>1e30) exit("Invalid standards");
+useMetadata = Dialog.getCheckbox();
+calibrationSource = "Manual entry";
+metadataDir = "";
+if (useMetadata) {
+    metadataPath = File.openDialog("Select Step 1 metadata.json");
+    if (File.getName(metadataPath) != "metadata.json") {
+        exit("Select the Step 1 metadata.json file.");
+    }
+    metadataText = File.openAsString(metadataPath);
+    SPvit = readJSONNumber(metadataText, "SPvit");
+    SPfree = readJSONNumber(metadataText, "SPfree");
+    metadataDir = File.getParent(metadataPath);
+    File.setDefaultDir(metadataDir);
+    calibrationSource = metadataPath;
+} else {
+    Dialog.create("FPRM calibration standards");
+    Dialog.addNumber("SPvit", 0.725, 3, 1, "");
+    Dialog.addNumber("SPfree", 0.975, 3, 1, "");
+    Dialog.show();
+    SPvit = Dialog.getNumber();
+    SPfree = Dialog.getNumber();
+}
+if (isNaN(SPvit) || isNaN(SPfree) || SPvit<=0 || SPfree<=SPvit || SPfree>1e30) {
+    exit("Invalid standards");
+}
 
 // Organize File & Directory names
 path = File.openDialog("Choose Intensity 'I' File:");  // Select I (intensity) file
 dir = File.getParent(path);                            // pull out the folder name
-File.setDefaultDir(path);
+if (useMetadata && dir != metadataDir) {
+    exit("Select an I image in the metadata directory.");
+}
+File.setDefaultDir(dir);
 
 I_fname = File.getName(path);                          // file name
 dotposition = lastIndexOf(I_fname,".");
@@ -74,28 +102,32 @@ cellmask_fname = dir + File.separator + "FPRM_Step3_CellMask_" + basename + ".ti
 cytomask_fname = dir + File.separator + "FPRM_Step3_CytoMask_" + basename + ".tif";
 mitomask_fname = dir + File.separator + "FPRM_Step3_MitoMask_" + basename + ".tif";
 
-// Reserve a common run suffix across all outputs.
+// Reserve a common run suffix across all outputs, incremented if previous run is detected.
 runNumber=1;
 do {
  suffix="";
- if (runNumber>1) suffix="_"+runNumber;
-// Save file names
-FPRM_CellID_img_fname = dir + File.separator + "FPRM_Step4_CellID_" + basename + suffix + ".tif";
-FPRM_SP_img_fname = dir + File.separator + "FPRM_Step4_SP_" + basename + suffix + ".tiff";
-FPRM_FreeNADH_img_fname = dir + File.separator + "FPRM_Step4_FreeNADH_" + basename + suffix + ".tif";
-FPRM_FreeNADH_Colormapped_img_fname = dir + File.separator + "FPRM_Step4_FreeNADH_Colormapped_" + basename + suffix + ".tif";
-FPRM_Results_fname = dir + File.separator + "FPRM_Step4_Results_" + basename + suffix + ".txt";
-FPRM_Condensed_Results_fname = dir + File.separator + "FPRM_Step4_Condensed_Results_" + basename + suffix + ".txt";
+ if (runNumber>1) {
+     suffix="_"+runNumber;
+ }
+ // Save file names
+ FPRM_CellID_img_fname = dir + File.separator + "FPRM_Step4_CellID_" + basename + suffix + ".tif";
+ FPRM_SP_img_fname = dir + File.separator + "FPRM_Step4_SP_" + basename + suffix + ".tiff";
+ FPRM_FreeNADH_img_fname = dir + File.separator + "FPRM_Step4_FreeNADH_" + basename + suffix + ".tif";
+ FPRM_FreeNADH_Colormapped_img_fname = dir + File.separator + "FPRM_Step4_FreeNADH_Colormapped_" + basename + suffix + ".tif";
+ FPRM_Results_fname = dir + File.separator + "FPRM_Step4_Results_" + basename + suffix + ".txt";
+ FPRM_Condensed_Results_fname = dir + File.separator + "FPRM_Step4_Condensed_Results_" + basename + suffix + ".txt";
 
- collision = File.exists(FPRM_CellID_img_fname) || File.exists(FPRM_SP_img_fname) || File.exists(FPRM_FreeNADH_img_fname) || File.exists(FPRM_FreeNADH_Colormapped_img_fname) || File.exists(FPRM_Results_fname) || File.exists(FPRM_Condensed_Results_fname);
+ collision = (File.exists(FPRM_CellID_img_fname) || File.exists(FPRM_SP_img_fname) || File.exists(FPRM_FreeNADH_img_fname) || File.exists(FPRM_FreeNADH_Colormapped_img_fname) || File.exists(FPRM_Results_fname) || File.exists(FPRM_Condensed_Results_fname));
  runNumber++;
 } while (collision);
+
 // Make record of how calculations were created (for recreation or debugging if necessary later)
 info_str = "FPRM_Step4_SingleCellCalculations.ijm Macro\t" + date + "\t" + user + "\t" + basename;
 File.append(info_str, FPRM_Results_fname);
 File.saveString("", FPRM_Condensed_Results_fname);
 info_str2 = "FPRM calibration standards: SPvit=" + SPvit + "; SPfree=" + SPfree;
 File.append(info_str2, FPRM_Results_fname);
+File.append("Calibration source: " + calibrationSource, FPRM_Results_fname);
 info_str3 = "           Color-coded image scaling from ";
 if (pixel_lim_opt) {info_str3 = info_str3 + "provided limits:\t\t" + d2s(User_pixel_lims[0],2) + "\t" + d2s(User_pixel_lims[1],2);}
 else {info_str3 = info_str3 + "standards' range:\t\t" + d2s(SPvit,3) + "\t" + d2s(SPfree,3);}
@@ -460,3 +492,39 @@ saveAs("Tiff", FPRM_FreeNADH_Colormapped_img_fname);
 // Close all windows
 waitForUser("Inspect / Save any images, then press OK to close all windows:");
 run("Close All");
+// Read unique top-level numeric fields in the Step 1 generated JSON.
+// Not a general JSON parser; the generated schema puts calibration before notes.
+function readJSONNumber(json, key) {
+    token = "\"" + key + "\"";
+    start = indexOf(json, token);
+    if (start < 0) {
+        exit("Missing metadata field: " + key);
+    }
+    rest = substring(json, start + lengthOf(token));
+    rest = trim(rest);
+    if (!startsWith(rest, ":")) {
+        exit("Invalid metadata field: " + key);
+    }
+    rest = trim(substring(rest, 1));
+    end = 0;
+    while (end < lengthOf(rest)) {
+        ch = substring(rest, end, end + 1);
+        if (indexOf("0123456789.eE+-", ch) < 0) {
+            break;
+        }
+        end = end + 1;
+    }
+    numberText = substring(rest, 0, end);
+    if (!matches(numberText, "-?(0|[1-9][0-9]*)([.][0-9]+)?([eE][+-]?[0-9]+)?")) {
+        exit("Invalid numeric metadata field: " + key);
+    }
+    tail = trim(substring(rest, end));
+    if (!startsWith(tail, ",") && !startsWith(tail, "}")) {
+        exit("Invalid numeric metadata field: " + key);
+    }
+    value = parseFloat(numberText);
+    if (isNaN(value)) {
+        exit("Invalid numeric metadata field: " + key);
+    }
+    return value;
+}

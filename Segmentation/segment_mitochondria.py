@@ -19,6 +19,38 @@ CONFIG_PATH = Path(__file__).resolve().with_name("ilastik_path.txt")
 TIFF_SUFFIXES = (".tif", ".tiff")
 
 
+def load_experiment_metadata(metadata_path):
+    """Validate optional Step 1 metadata and return its portable directory and reference."""
+    if metadata_path is None:
+        return None, None
+    import math
+    path = Path(metadata_path).expanduser().resolve(strict=True)
+    if path.name != "metadata.json":
+        raise ValueError("Select the Step 1 metadata.json file.")
+    raw = path.read_bytes()
+    data = json.loads(raw.decode("utf-8-sig"))
+    vit, free = data["SPvit"], data["SPfree"]
+    if not all(type(v) in (int, float) and math.isfinite(v) for v in (vit, free)) or not 0 < vit < free:
+        raise ValueError("Invalid FPRM calibration standards.")
+    return path.parent, {"filename": path.name, "sha256": hashlib.sha256(raw).hexdigest()}
+
+
+def select_experiment_metadata():
+    """Offer metadata first; declining retains the original manual workflow."""
+    from tkinter import Tk, filedialog, messagebox
+    root = Tk()
+    root.withdraw()
+    try:
+        if not messagebox.askyesno("FPRM setup", "Use Step 1 metadata.json to locate the experiment images?", parent=root):
+            return None
+        path = filedialog.askopenfilename(parent=root, title="Select experiment metadata.json", filetypes=[("JSON files", "*.json")])
+        if not path:
+            raise SystemExit("Metadata selection cancelled.")
+        return path
+    finally:
+        root.destroy()
+
+
 def is_wsl():
     """Detect Windows Subsystem for Linux, not ordinary Linux."""
     return (
@@ -66,7 +98,7 @@ def ilastik_argument_path(path, launcher):
     return str(path)
 
 
-def select_files():
+def select_files(initial_dir=None):
     """Select the trained model and raw image using native file dialogs."""
     from tkinter import Tk, filedialog
 
@@ -85,6 +117,7 @@ def select_files():
         image = filedialog.askopenfilename(
             parent=root,
             title="Select the raw FPRM image",
+            initialdir=str(initial_dir) if initial_dir else "",
             filetypes=[("TIFF images", ("*.tif", "*.tiff", "*.TIF", "*.TIFF"))],
         )
         if not image:
@@ -96,15 +129,20 @@ def select_files():
     return Path(model), Path(image)
 
 
-def segment(model_path=None, image_path=None, *, mito_label=1, output_path=None, overwrite=False):
+def segment(model_path=None, image_path=None, *, metadata_path=None, mito_label=1, output_path=None, overwrite=False):
     """Run ilastik and save a uint8 binary mitochondrial mask."""
+    if model_path is None and image_path is None and metadata_path is None:
+        metadata_path = select_experiment_metadata()
+    initial_dir, experiment_reference = load_experiment_metadata(metadata_path)
     if model_path is None and image_path is None:
-        model_path, image_path = select_files()
+        model_path, image_path = select_files(initial_dir)
     elif model_path is None or image_path is None:
         raise ValueError("Supply both model_path and image_path, or neither.")
 
     model_path = Path(model_path).absolute()
     image_path = Path(image_path).absolute()
+    if initial_dir is not None and image_path.resolve().parent != initial_dir:
+        raise ValueError("I image must be in the selected metadata directory.")
     launcher = get_ilastik_path()
 
     for path in (model_path, image_path):
@@ -176,7 +214,7 @@ def segment(model_path=None, image_path=None, *, mito_label=1, output_path=None,
 
     tifffile.imwrite(output, mask.astype(np.uint8)*255, photometric="minisblack")
     metadata.write_text(json.dumps({
-        "schema_version": "1.0", "source_image": image_path.name,
+        "schema_version": "1.0", "experiment_metadata": experiment_reference, "source_image": image_path.name,
         "source_sha256": hashlib.sha256(image_path.read_bytes()).hexdigest(),
         "model": model_path.name, "model_sha256": hashlib.sha256(model_path.read_bytes()).hexdigest(),
         "mito_label": mito_label, "export_source": "Simple Segmentation",
