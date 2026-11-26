@@ -1,0 +1,24 @@
+name: mito-segmentation
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.13
+  - pip
+  - setuptools
+  - wheel
+  - numpy>=2.4.3
+  - h5py>=3.16
+  - scipy
+  - scikit-image
+  - scikit-learn
+  - tifffile
+  - imagecodecs
+  - matplotlib
+  - pandas
+  - optuna
+  - joblib
+  - requests>=2.32.5
+  - pip:
+      - easilastik==2.0.0
+      - opencv-python>=4.13.0.90
