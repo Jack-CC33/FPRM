@@ -1,0 +1,1 @@
+Validation only: instance labels approximated from supplied integer ROI polygon coordinates, later ROI wins on overlap. Not original Cellpose labels. Prediction imported from supplied binary MitoMask, not rerun in Ilastik. No upstream model metadata. Do not use as production analysis inputs.

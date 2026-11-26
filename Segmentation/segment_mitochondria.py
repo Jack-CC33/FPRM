@@ -1,119 +1,192 @@
 """Apply a trained two-class ilastik pixel classifier to a 2D TIFF."""
-from tkinter import Tk, filedialog
+
 from pathlib import Path
 from tempfile import TemporaryDirectory
-import numpy as np
-import tifffile
+import platform
+import hashlib
+import json
+from datetime import datetime, timezone
+import sys
 import subprocess
 
-# User selects Ilastik model for segmentation
-root = Tk()
-root.withdraw()
-
-model_path = filedialog.askopenfilename(title="Select the Ilastik model file", filetypes=[("Ilastik models", "*.ilp")])
-
-if model_path:
-    print(f"Selected model: {model_path}")
-else:
-    raise SystemExit("No model selected.")
-
-root.destroy()
-
-# User selects raw FPRM image to segment
-root = Tk()
-root.withdraw()
-
-image_path = filedialog.askopenfilename(title="Select the raw FPRM image", filetypes=[("TIFF images", "*.tif")])
-
-if image_path:
-    print(f"Selected image: {image_path}")
-else:
-    raise SystemExit("No image selected.")
-
-root.destroy()
+import numpy as np
+import tifffile
 
 
-
-# Change these paths for your computer.
-MODEL_PATH = Path(model_path)
-IMAGE_PATH = Path(image_path)
-# None uses Easilastik's automatic executable discovery.
-ILASTIK_PATH = Path(r"/mnt/c/Program Files/ilastik-1.4.2-gpu/ilastik.exe")
-# Optional aligned Cellpose instance-label TIFF.
-CELL_MASK_PATH = None
-MITO_LABEL = 1
-OVERWRITE = False
-
-# Function needed to convert WSL paths to Windows paths for subprocess calls
-# I run this python script in WSL, but my ilastik installation is in Windows.
-# YOU MAY NEED TO MODIFY THIS SCRIPT IF USING A DIFFERENT SETUP.
-def windows_path(path):
-    """Convert a WSL filesystem path to a Windows path."""
-    return subprocess.check_output(
-        ["wslpath", "-w", str(path)],
-        text=True
-    ).strip()
+# USER SETTINGS
+# Keep the local launcher path in ilastik_path.txt beside this script.
+CONFIG_PATH = Path(__file__).resolve().with_name("ilastik_path.txt")
+TIFF_SUFFIXES = (".tif", ".tiff")
 
 
-def segment():
-    from easilastik import run_ilastik
+def is_wsl():
+    """Detect Windows Subsystem for Linux, not ordinary Linux."""
+    return (
+        platform.system() == "Linux"
+        and "microsoft" in platform.release().lower()
+    )
 
-    for path in (MODEL_PATH, IMAGE_PATH):
+
+def get_ilastik_path():
+    """Read the local executable or launcher path (one line, no quotes)."""
+    if not CONFIG_PATH.is_file():
+        raise FileNotFoundError(
+            f"Create {CONFIG_PATH} and enter your ilastik launcher path."
+        )
+
+    raw = CONFIG_PATH.read_text(encoding="utf-8-sig").strip()
+    if not raw or len(raw.splitlines()) != 1:
+        raise ValueError("ilastik_path.txt must contain exactly one path.")
+
+    # WSL users may enter either a Windows drive path or a /mnt/c path.
+    if is_wsl() and len(raw) >= 3 and raw[1] == ":" and raw[2] in "\\/":
+        raw = subprocess.check_output(
+            ["wslpath", "-u", raw], text=True
+        ).strip()
+
+    launcher = Path(raw).expanduser()
+    if not launcher.is_absolute():
+        launcher = CONFIG_PATH.parent / launcher
+
+    if not launcher.is_file():
+        raise FileNotFoundError(f"Ilastik launcher not found: {launcher}")
+
+    return launcher
+
+
+def ilastik_argument_path(path, launcher):
+    """Translate file arguments only when WSL launches Windows ilastik."""
+    path = Path(path).absolute()
+
+    if is_wsl() and launcher.suffix.lower() == ".exe":
+        return subprocess.check_output(
+            ["wslpath", "-w", str(path)], text=True
+        ).strip()
+
+    return str(path)
+
+
+def select_files():
+    """Select the trained model and raw image using native file dialogs."""
+    from tkinter import Tk, filedialog
+
+    root = Tk()
+    root.withdraw()
+    try:
+        model = filedialog.askopenfilename(
+            parent=root,
+            title="Select the Ilastik model file",
+            filetypes=[("Ilastik models", "*.ilp")],
+        )
+        if not model:
+            raise SystemExit("No model selected.")
+        print(f"Selected model: {model}")
+
+        image = filedialog.askopenfilename(
+            parent=root,
+            title="Select the raw FPRM image",
+            filetypes=[("TIFF images", ("*.tif", "*.tiff", "*.TIF", "*.TIFF"))],
+        )
+        if not image:
+            raise SystemExit("No image selected.")
+        print(f"Selected image: {image}")
+    finally:
+        root.destroy()
+
+    return Path(model), Path(image)
+
+
+def segment(model_path=None, image_path=None, *, mito_label=1, output_path=None, overwrite=False):
+    """Run ilastik and save a uint8 binary mitochondrial mask."""
+    if model_path is None and image_path is None:
+        model_path, image_path = select_files()
+    elif model_path is None or image_path is None:
+        raise ValueError("Supply both model_path and image_path, or neither.")
+
+    model_path = Path(model_path).absolute()
+    image_path = Path(image_path).absolute()
+    launcher = get_ilastik_path()
+
+    for path in (model_path, image_path):
         if not path.is_file():
             raise FileNotFoundError(path)
-    if not IMAGE_PATH.name.startswith('I_') or IMAGE_PATH.suffix.lower() != '.tif':
-        raise ValueError('Expected an I_*.tif input image')
-    image = tifffile.imread(IMAGE_PATH)
+
+    if model_path.suffix.lower() != ".ilp":
+        raise ValueError("Expected an ilastik .ilp project.")
+    if not image_path.name.startswith("I_") or image_path.suffix.lower() not in TIFF_SUFFIXES:
+        raise ValueError("Expected an I_*.tif or I_*.tiff input image.")
+    if mito_label not in (1, 2):
+        raise ValueError("mito_label must be 1 or 2.")
+
+    image = tifffile.imread(image_path)
     if image.ndim != 2:
-        raise ValueError('Expected a single-channel 2D image')
-    output = IMAGE_PATH.with_name('MitoMask_' + IMAGE_PATH.name[2:])
-    if output.exists() and not OVERWRITE:
+        raise ValueError("Expected a single-channel 2D image.")
+
+    # Standardize final output to .tif, regardless of input extension.
+    output = Path(output_path) if output_path else image_path.with_name("FPRM_Step3_MitoPrediction_" + image_path.stem[2:] + ".tif")
+    metadata = output.with_name("FPRM_Step3_MitoPredictionMetadata_" + image_path.stem[2:] + ".json")
+    if output.resolve() in (image_path.resolve(), model_path.resolve()):
+        raise ValueError("Output cannot replace input.")
+    if metadata.exists() and not overwrite:
+        raise FileExistsError(metadata)
+    if output.exists() and not overwrite:
         raise FileExistsError(output)
 
-    # Export integer class labels, not a colored visualization.
-    # A temporary directory prevents accidentally reading stale results.
-    with TemporaryDirectory(prefix="mito_ilastik_", dir=IMAGE_PATH.parent) as temp:
-        export_path = Path(temp) / "segmentation.tif"
+    # Keep temporary files beside the input so both WSL and Windows
+    # can access them when the input is on a shared Windows drive.
+    with TemporaryDirectory(prefix="mito_ilastik_", dir=image_path.parent) as temp:
+        export_path = Path(temp) / "segmentation.tiff"
 
         command = [
-            str(ILASTIK_PATH),
+            str(launcher),
             "--headless",
-            f"--project={windows_path(MODEL_PATH)}",
+            f"--project={ilastik_argument_path(model_path, launcher)}",
             "--export_source=Simple Segmentation",
             "--output_format=tiff",
-            f"--output_filename_format={windows_path(export_path)}",
-            windows_path(IMAGE_PATH)
+            f"--output_filename_format={ilastik_argument_path(export_path, launcher)}",
+            ilastik_argument_path(image_path, launcher),
         ]
 
+        print(f"Using ilastik: {launcher}")
         subprocess.run(command, check=True)
 
-        if not export_path.is_file():
-            raise FileNotFoundError(
-                f"Ilastik did not produce {export_path}"
-            )
+        # Ilastik versions may choose either .tif or .tiff.
+        files = [
+            p for p in Path(temp).iterdir()
+            if p.is_file() and p.suffix.lower() in TIFF_SUFFIXES
+        ]
+        if len(files) != 1:
+            raise RuntimeError(f"Expected one exported TIFF; found {files}")
 
-        labels = tifffile.imread(export_path).squeeze()
+        labels = tifffile.imread(files[0])
+        # Remove an optional singleton channel axis, not spatial axes.
+        if labels.ndim != 2:
+            labels = labels.squeeze()
+            if labels.ndim != 2 and labels.size == image.size:
+                # Only restore singleton spatial dimensions.
+                if tuple(s for s in image.shape if s != 1) == labels.shape:
+                    labels = labels.reshape(image.shape)
 
-        if (
-            labels.shape != image.shape
-            or not np.isin(labels, [1, 2]).all()
-        ):
+        if labels.shape != image.shape or not np.isin(labels, [1, 2]).all():
             raise ValueError(
-                "Unexpected export: check class labels, "
-                "axes and export scaling"
+                "Unexpected export: check class labels, axes and export scaling."
             )
 
-        mask = labels == MITO_LABEL
+        mask = labels == mito_label
 
-    if CELL_MASK_PATH is not None:
-        cells = tifffile.imread(CELL_MASK_PATH)
-        if cells.shape != image.shape:
-            raise ValueError('Cellpose mask and image shapes differ')
-        mask &= cells > 0
-    tifffile.imwrite(output, mask.astype(np.uint8), photometric='minisblack')
-    print(f'Saved {output} ({mask.sum():,} mitochondrial pixels)')
+    tifffile.imwrite(output, mask.astype(np.uint8)*255, photometric="minisblack")
+    metadata.write_text(json.dumps({
+        "schema_version": "1.0", "source_image": image_path.name,
+        "source_sha256": hashlib.sha256(image_path.read_bytes()).hexdigest(),
+        "model": model_path.name, "model_sha256": hashlib.sha256(model_path.read_bytes()).hexdigest(),
+        "mito_label": mito_label, "export_source": "Simple Segmentation",
+        "prediction": output.name, "prediction_sha256": hashlib.sha256(output.read_bytes()).hexdigest(),
+        "processed_at": datetime.now(timezone.utc).isoformat(), "ilastik_version": None,
+        "python_version": sys.version, "numpy_version": np.__version__, "tifffile_version": tifffile.__version__
+    }, indent=2))
+    print(f"Saved {output} ({mask.sum():,} mitochondrial pixels)")
     return output
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     segment()

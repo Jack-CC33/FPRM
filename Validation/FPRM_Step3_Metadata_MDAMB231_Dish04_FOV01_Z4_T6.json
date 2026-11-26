@@ -1,0 +1,42 @@
+{
+  "schema_version": "1.0",
+  "basename": "MDAMB231_Dish04_FOV01_Z4_T6",
+  "processed_at": "2026-11-26T05:12:12.650696+00:00",
+  "inputs": {
+    "I_MDAMB231_Dish04_FOV01_Z4_T6.tif": "ef4dea478e3a663bd86956478cfd9f08860e7d6ca1fb1c2f806aa30e609d434d",
+    "FPRM_Step2_CellLabels_MDAMB231_Dish04_FOV01_Z4_T6.tif": "631b5a0312d7a0abe7e3101d5cd73f7b3f1990b54f38ee1f18ad1cee01eaee89",
+    "FPRM_Step3_MitoPrediction_MDAMB231_Dish04_FOV01_Z4_T6.tif": "c21533a4503323aa7ca119c235c6b06b0f21e9b332fe3cc3cf733381b4b992c9"
+  },
+  "outputs": {
+    "FPRM_Step3_CellMask_MDAMB231_Dish04_FOV01_Z4_T6.tif": "4d0ee19466cbb99977b117e3de7bdaad9c3a4fabc39eee21a6d7d53ffbe363d7",
+    "FPRM_Step3_MitoMask_MDAMB231_Dish04_FOV01_Z4_T6.tif": "8333ad49bef2df91df87ba029cdb57d63c0bb43ae59926e7e7776d5c6105a1ea",
+    "FPRM_Step3_CytoMask_MDAMB231_Dish04_FOV01_Z4_T6.tif": "164d42ff22216082cbdb05491c6a417634b059636160b5bb5e6e04cb6e346201",
+    "FPRM_Step3_SegmentationReview_MDAMB231_Dish04_FOV01_Z4_T6.tif": "f18bfd0a444ead0b6af382f904ea5cf2bc00c83aa4840d615e83e2338b950771"
+  },
+  "upstream": {
+    "FPRM_Step2_Metadata_MDAMB231_Dish04_FOV01_Z4_T6.json": null,
+    "FPRM_Step3_MitoPredictionMetadata_MDAMB231_Dish04_FOV01_Z4_T6.json": null
+  },
+  "foreground_value": 255,
+  "cytoplasm_definition": "cell_minus_mito",
+  "manual_correction": false,
+  "review": {
+    "alpha": 0.4,
+    "display_limits": [
+      4.0,
+      30901.420000000042
+    ],
+    "boundary_rgb": [
+      255,
+      255,
+      0
+    ],
+    "mito_rgb": [
+      0,
+      255,
+      255
+    ]
+  },
+  "numpy_version": "2.3.5",
+  "tifffile_version": "2026.5.15"
+}
