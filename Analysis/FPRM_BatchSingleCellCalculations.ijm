@@ -160,6 +160,8 @@ excluded = "";
 open(P_fname); // 32-bit
 run("Select None");
 rename("P");
+getPixelSize(spatialUnit, pixelWidth, pixelHeight);
+areaUnits = squaredAreaUnit(spatialUnit);
 
 open(S_fname); // 32-bit
 run("Select None");
@@ -172,8 +174,7 @@ open(cellmask_fname); // 8-bit
 run("Select None");
 run("Divide...", "value=255.00000 ");
 rename("Cell Mask");
-getPixelSize(spatialUnit, pixelWidth, pixelHeight);
-areaUnits = squaredAreaUnit(spatialUnit);
+setVoxelSize(pixelWidth, pixelHeight, 1, spatialUnit);
 
 
 roiManager("reset");
@@ -198,6 +199,7 @@ open(cytomask_fname); // 8-bit
 run("Select None");
 run("Divide...", "value=255.00000");
 rename("Cyto Mask");
+setVoxelSize(pixelWidth, pixelHeight, 1, spatialUnit);
 
 imageCalculator("Multiply create 16-bit", "P", "Cyto Mask");
 rename("P Cyto");
@@ -208,6 +210,7 @@ open(mitomask_fname); // 8-bit
 run("Select None");
 run("Divide...", "value=255.00000");
 rename("Mito Mask");
+setVoxelSize(pixelWidth, pixelHeight, 1, spatialUnit);
 
 imageCalculator("Multiply create 16-bit ", "P", "Mito Mask");
 rename("P Mito");
@@ -219,6 +222,7 @@ rename("S Mito");
 
 
 ///////////////////////////////////////////////////////////////////////////
+print("Reference unit: [" + spatialUnit + "]");
 checkSpatialCalibration("P", spatialUnit, pixelWidth, pixelHeight);
 checkSpatialCalibration("S", spatialUnit, pixelWidth, pixelHeight);
 checkSpatialCalibration("Cyto Mask", spatialUnit, pixelWidth, pixelHeight);
@@ -592,19 +596,44 @@ function jsonString(value) {
 }
 
 function squaredAreaUnit(unit) {
+	unit = trim(unit);
+
+	if (unit == "") {
+	    return "uncalibrated";
+	}
+	
     if (unit=="pixel" || unit=="pixels" || unit=="px" || unit=="") {
         return "px";
     }
+    
     if (unit=="um" || unit=="µm" || unit=="μm" || unit=="micron" || unit=="microns") {
+    //if (unit=="um" || unit=="um2"|| unit=="micron" || unit=="microns") {
         return "um2";
     }
+    
     return unit + "2";
 }
 
 function checkSpatialCalibration(title, expectedUnit, expectedWidth, expectedHeight) {
     selectWindow(title);
     getPixelSize(u, w, h);
-    if (squaredAreaUnit(u)!=squaredAreaUnit(expectedUnit) || abs(w-expectedWidth)>1e-9*maxOf(abs(w),abs(expectedWidth)) || abs(h-expectedHeight)>1e-9*maxOf(abs(h),abs(expectedHeight))) {
-        exit("Spatial calibration mismatch: " + title + ". Ensure P, S and masks use identical calibration before analysis.");
+    
+    print("Image: " + title);
+	print("Actual unit: [" + u + "]");
+	print("Expected unit: [" + expectedUnit + "]");
+
+    actualAreaUnit = squaredAreaUnit(u);
+    expectedAreaUnit = squaredAreaUnit(expectedUnit);
+
+    if (actualAreaUnit != expectedAreaUnit) {
+        exit("Spatial calibration unit mismatch: " + title + " - " + actualAreaUnit + " vs. " + expectedAreaUnit);
+    }
+
+    if (abs(w-expectedWidth) > 1e-9*maxOf(abs(w), abs(expectedWidth))) {
+        exit("Pixel width mismatch: " + title);
+    }
+
+    if (abs(h-expectedHeight) > 1e-9*maxOf(abs(h), abs(expectedHeight))) {
+        exit("Pixel height mismatch: " + title);
     }
 }
