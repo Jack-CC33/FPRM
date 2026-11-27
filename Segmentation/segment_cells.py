@@ -40,7 +40,7 @@ def select_experiment_metadata():
         root.destroy()
 
 
-def segment_cells(image_path=None, *, metadata_path=None, gpu=True, diameter=60, flow_threshold=2.0,
+def segment_cells(image_path=None, *, metadata_path=None, model_path=None, gpu=True, diameter=60, flow_threshold=2.0,
                   cellprob_threshold=-2, niter=10000, overwrite=False):
     if image_path is None and metadata_path is None:
         metadata_path = select_experiment_metadata()
@@ -66,7 +66,7 @@ def segment_cells(image_path=None, *, metadata_path=None, gpu=True, diameter=60,
         if f.exists() and not overwrite: raise FileExistsError(f)
     image = tifffile.imread(p)
     if image.ndim != 2: raise ValueError('Expected 2D image')
-    model = models.CellposeModel(gpu=gpu)
+    model = models.CellposeModel(gpu=gpu, **({"pretrained_model": str(Path(model_path).resolve())} if model_path else {}))
     if gpu and not model.gpu: raise RuntimeError('GPU requested but unavailable')
     masks, _, _ = model.eval([image], diameter=diameter, flow_threshold=flow_threshold,
                              cellprob_threshold=cellprob_threshold, niter=niter)
@@ -77,7 +77,8 @@ def segment_cells(image_path=None, *, metadata_path=None, gpu=True, diameter=60,
     io.save_rois(mask, str(roi_base))
     if not roi.is_file(): raise RuntimeError('Expected ROI ZIP was not generated')
     meta.write_text(json.dumps(dict(schema_version='1.0', experiment_metadata=experiment_reference, source_image=p.name,
-        source_sha256=hashlib.sha256(p.read_bytes()).hexdigest(), model='cpsam',
+        source_sha256=hashlib.sha256(p.read_bytes()).hexdigest(), model=Path(model_path).name if model_path else 'cpsam',
+        model_path=str(Path(model_path).resolve()) if model_path else str(getattr(model, 'pretrained_model', 'cpsam')), 
         cellpose_version=version('cellpose'), gpu=gpu, diameter=diameter,
         flow_threshold=flow_threshold, cellprob_threshold=cellprob_threshold,niter=niter,
         processed_at=datetime.now(timezone.utc).isoformat(),

@@ -216,7 +216,7 @@ def segment(model_path=None, image_path=None, *, metadata_path=None, mito_label=
     metadata.write_text(json.dumps({
         "schema_version": "1.0", "experiment_metadata": experiment_reference, "source_image": image_path.name,
         "source_sha256": hashlib.sha256(image_path.read_bytes()).hexdigest(),
-        "model": model_path.name, "model_sha256": hashlib.sha256(model_path.read_bytes()).hexdigest(),
+        "model": model_path.name, "model_path": str(model_path), "model_sha256": hashlib.sha256(model_path.read_bytes()).hexdigest(),
         "mito_label": mito_label, "export_source": "Simple Segmentation",
         "prediction": output.name, "prediction_sha256": hashlib.sha256(output.read_bytes()).hexdigest(),
         "processed_at": datetime.now(timezone.utc).isoformat(), "ilastik_version": None,

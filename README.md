@@ -39,10 +39,45 @@ On Ubuntu create the environment with `conda env create -f CondaEnvironment/mito
 
 Open the Step 4 macro in Fiji and select Step 1 metadata.json to load calibration standards, or uncheck the option to enter them manually. Independent channel intensity support and the existing 16-bit conversion are retained pending further testing. CMRatio is relative free NADH cyto/mito; undefined ratios exclude the cell. Run `Tests/test_intensity_preservation.ijm` in Fiji with Bio-Formats and a representative two-channel CZI to compare conversion modes. The test changes the conversion preference to scaling disabled at completion. Run `Preparation/ImagePreparation.ijm` in Fiji with Bio-Formats to prepare CZI files and create experiment-level `metadata.json`.
 
-This update is a merge overlay, not a complete repository: retain your existing license, general environment files, model and conversion utility. Remove the superseded notebook and mask-generation macro if present. No orchestration or CLI parser is included.
+This update is a merge overlay, not a complete repository: retain your existing license, general environment files, model and conversion utility. Remove the superseded notebook and mask-generation macro if present. No CLI parser is included.
 
 ### Optional experiment metadata
 
 Each interactive Python segmentation script offers Step 1 `metadata.json` before image selection. Decline to use the original manual workflow. When selected, its current parent directory (not the recorded absolute path) initializes the I-image dialog. Select an I image in that directory. Copy metadata.json alongside the images when moving between Windows and Ubuntu. Programmatic callers may pass `metadata_path=...`; no automatic metadata discovery occurs. The segmentation records include the metadata filename and SHA-256 hash (null if omitted). Step 4 records the actual calibration values and their source. The ImageJ reader is limited to the numeric fields in the generated Step 1 schema, not arbitrary JSON.
 
 Run `python -m unittest discover -s Tests -v` to test the Python metadata and mask logic.
+
+### Batch segmentation and final metadata
+
+Run `python Segmentation/batch_segment_cells.py` in the Cellpose environment, then `python Segmentation/batch_segment_mitochondria.py` in the mitochondrial environment. Select the experiment directory and model as prompted. Step 4 can be run interactively or with `Analysis/FPRM_BatchSingleCellCalculations.ijm`. Close existing image windows first. Batch loads calibration once, skips missing prerequisites, and stops on other macro errors. After analysis, run `python Segmentation/metadata_distribution_and_cleanup.py` in the mitochondrial environment to generate comprehensive JSON and metadata-bearing TIFF copies. Retain originals until TIFF calibration and display preservation have been validated.
+
+### Single-cell results
+
+`FPRM_Step4_Single_Cell_Results_basename.txt` is tab-delimited with the following 23 columns in order. `Cell_Index` is the existing zero-based ROI index; excluded cells can leave gaps.
+
+1. `Cell_Index`
+2. `Cell_Area`
+3. `Cell_Centroid_X`
+4. `Cell_Centroid_Y`
+5. `Cell_Intensity`
+6. `Cell_SP`
+7. `Cell_RelativeFreeNADH`
+8. `CytoMito_RelativeFreeNADH_Ratio`
+9. `Mito_Area`
+10. `Mito_Intensity`
+11. `Mito_SP`
+12. `Mito_RelativeFreeNADH`
+13. `Cyto_Area`
+14. `Cyto_Intensity`
+15. `Cyto_SP`
+16. `Cyto_RelativeFreeNADH`
+17. `Mito_AreaFraction`
+18. `Cell_ValidP_Area`
+19. `Mito_ValidP_Area`
+20. `Cyto_ValidP_Area`
+21. `Mito_ColorValue`
+22. `Cyto_ColorValue`
+
+23. `Area_Units`
+
+Areas use ImageJ spatial calibration: `px` for pixel counts, `um2` for square micrometers, or the spatial unit followed by `2`. P, S and masks must have matching spatial calibration; analysis stops on mismatch. The centroid is measured over P-positive cell pixels. Mito_AreaFraction is dimensionless. The minimum P area remains 30 in the current area units. Geometric areas retain fractional precision. Excluded cells and reasons are recorded in Step 4 AnalysisMetadata JSON. See [TIFF metadata guide](TIFF_METADATA.md).

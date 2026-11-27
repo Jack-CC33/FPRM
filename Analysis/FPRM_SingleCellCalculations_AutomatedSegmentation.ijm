@@ -114,25 +114,14 @@ do {
  FPRM_SP_img_fname = dir + File.separator + "FPRM_Step4_SP_" + basename + suffix + ".tiff";
  FPRM_FreeNADH_img_fname = dir + File.separator + "FPRM_Step4_FreeNADH_" + basename + suffix + ".tif";
  FPRM_FreeNADH_Colormapped_img_fname = dir + File.separator + "FPRM_Step4_FreeNADH_Colormapped_" + basename + suffix + ".tif";
- FPRM_Results_fname = dir + File.separator + "FPRM_Step4_Results_" + basename + suffix + ".txt";
- FPRM_Condensed_Results_fname = dir + File.separator + "FPRM_Step4_Condensed_Results_" + basename + suffix + ".txt";
+ FPRM_Results_fname = dir + File.separator + "FPRM_Step4_AnalysisMetadata_" + basename + suffix + ".json";
+ FPRM_Condensed_Results_fname = dir + File.separator + "FPRM_Step4_Single_Cell_Results_" + basename + suffix + ".txt";
 
  collision = (File.exists(FPRM_CellID_img_fname) || File.exists(FPRM_SP_img_fname) || File.exists(FPRM_FreeNADH_img_fname) || File.exists(FPRM_FreeNADH_Colormapped_img_fname) || File.exists(FPRM_Results_fname) || File.exists(FPRM_Condensed_Results_fname));
  runNumber++;
 } while (collision);
 
-// Make record of how calculations were created (for recreation or debugging if necessary later)
-info_str = "FPRM_Step4_SingleCellCalculations.ijm Macro\t" + date + "\t" + user + "\t" + basename;
-File.append(info_str, FPRM_Results_fname);
-File.saveString("", FPRM_Condensed_Results_fname);
-info_str2 = "FPRM calibration standards: SPvit=" + SPvit + "; SPfree=" + SPfree;
-File.append(info_str2, FPRM_Results_fname);
-File.append("Calibration source: " + calibrationSource, FPRM_Results_fname);
-info_str3 = "           Color-coded image scaling from ";
-if (pixel_lim_opt) {info_str3 = info_str3 + "provided limits:\t\t" + d2s(User_pixel_lims[0],2) + "\t" + d2s(User_pixel_lims[1],2);}
-else {info_str3 = info_str3 + "standards' range:\t\t" + d2s(SPvit,3) + "\t" + d2s(SPfree,3);}
-File.append(info_str3, FPRM_Results_fname);
-
+excluded = "";
 ///////////////////////////////////////////////////////////////////////////
 // Open needed files & Create Masked Images
 open(P_fname); // 32-bit
@@ -150,6 +139,9 @@ open(cellmask_fname); // 8-bit
 run("Select None");
 run("Divide...", "value=255.00000 ");
 rename("Cell Mask");
+getPixelSize(spatialUnit, pixelWidth, pixelHeight);
+areaUnits = squaredAreaUnit(spatialUnit);
+
 
 roiManager("reset");
 roiManager("Open", cellrois_fname);
@@ -194,6 +186,11 @@ rename("S Mito");
 
 
 ///////////////////////////////////////////////////////////////////////////
+checkSpatialCalibration("P", spatialUnit, pixelWidth, pixelHeight);
+checkSpatialCalibration("S", spatialUnit, pixelWidth, pixelHeight);
+checkSpatialCalibration("Cyto Mask", spatialUnit, pixelWidth, pixelHeight);
+checkSpatialCalibration("Mito Mask", spatialUnit, pixelWidth, pixelHeight);
+File.saveString("Cell_Index\tCell_Area\tCell_Centroid_X\tCell_Centroid_Y\tCell_Intensity\tCell_SP\tCell_RelativeFreeNADH\tCytoMito_RelativeFreeNADH_Ratio\tMito_Area\tMito_Intensity\tMito_SP\tMito_RelativeFreeNADH\tCyto_Area\tCyto_Intensity\tCyto_SP\tCyto_RelativeFreeNADH\tMito_AreaFraction\tCell_ValidP_Area\tMito_ValidP_Area\tCyto_ValidP_Area\tMito_ColorValue\tCyto_ColorValue\tArea_Units\n", FPRM_Condensed_Results_fname);
 // Measure Full Cell average P, average S, P/S ratio, error of P/S, and P+S Integrated Intensity
 run("Set Measurements...", "area mean centroid integrated limit redirect=None decimal=3");
 
@@ -226,7 +223,7 @@ for(roi = 0; roi < n_roi; roi++) {
 	run("Clear Results");
 	
 	if (Parea<30 || Pcell<=0 || Scell<=0 || isNaN(Pcell) || isNaN(Scell)){
-        File.append("Excluded ROI " + roi + ": invalid cell", FPRM_Results_fname);
+        excluded = addExclusion(excluded, roi, "invalid cell");
 		continue;
 	}
 	
@@ -266,7 +263,7 @@ for(roi = 0; roi < n_roi; roi++) {
 	run("Clear Results");
 	
 	if (Parea==0 || Pcyto<=0 || Scyto<=0 || isNaN(Pcyto) || isNaN(Scyto)){
-        File.append("Excluded ROI " + roi + ": invalid cytoplasm", FPRM_Results_fname);
+        excluded = addExclusion(excluded, roi, "invalid cytoplasm");
 		continue;
 	}
 	
@@ -307,7 +304,7 @@ for(roi = 0; roi < n_roi; roi++) {
 	run("Clear Results");
 	
 	if (Parea==0 || Pmito<=0 || Smito<=0 || isNaN(Pmito) || isNaN(Smito)){
-		File.append("Excluded ROI " + roi + ": invalid mitochondria", FPRM_Results_fname);
+		excluded = addExclusion(excluded, roi, "invalid mitochondria");
 		continue;
 	}
 	
@@ -329,12 +326,10 @@ for(roi = 0; roi < n_roi; roi++) {
 	RelativeFreeNADH_mito_color = ColorMap(RelativeFreeNADH_mito, pixel_lim_opt, User_pixel_lims[0], User_pixel_lims[1]);
 	
     if (Area_cell<=0 || Area_mito<=0 || Area_cyto<=0 || RelativeFreeNADH_mito==0 || isNaN(RelativeFreeNADH_mito)) {
-        File.append("Excluded ROI " + roi + ": undefined CMRatio", FPRM_Results_fname);
+        excluded = addExclusion(excluded, roi, "undefined CMRatio");
         continue;
     }
 	// ROI - SPcyto - Cytoplasm intensity
-	Cytoplasm_str = d2s(roi,0) + "\tCyto\tSPcyto\t" + d2s(SP_cyto,3) + "\tCyto Intensity\t" + d2s(Icyto,0) + "\tRelative free NADH\t" + d2s(RelativeFreeNADH_cyto,3) + "\tPixel Value\t" + d2s(RelativeFreeNADH_cyto_color,0);
-	File.append(Cytoplasm_str, FPRM_Results_fname);
 	
 	
 	
@@ -393,8 +388,6 @@ for(roi = 0; roi < n_roi; roi++) {
 
 	
 	// ROI - PSmito - Mitochondria intensity
-	Mitochondria_str = d2s(roi,0) + "\tMito\tSPmito\t" + d2s(SP_mito,3) + "\tMito Intensity\t" + d2s(Imito,0) + "\tRelative free NADH\t" + d2s(RelativeFreeNADH_mito,3) + "\tPixel Value\t" + d2s(RelativeFreeNADH_mito_color,0);
-	File.append(Mitochondria_str, FPRM_Results_fname);
 	
 	// raw S/P value image
 	imageCalculator("Multiply create 32-bit", "Mito Mask", "MaskCopy");
@@ -455,15 +448,14 @@ for(roi = 0; roi < n_roi; roi++) {
 	CMRatio = RelativeFreeNADH_cyto / RelativeFreeNADH_mito;
 
 	// ROI - Total Integrated Intensity - Cellbody avg S/P - Relative Free NADH (cell avg) - SPcyto/SPmito
-	Cellbody_str = d2s(roi,0) + "\tCell\tSPcell\t" + d2s(SP_cell,3) + "\tCell Intensity\t" + d2s(Icell,0) + "\tRelative free NADH\t" + d2s(RelativeFreeNADH_cell,3) + "\tCytofree/Mitofree\t" + d2s(CMRatio,3);
-	File.append(Cellbody_str, FPRM_Results_fname);
-    File.append("ROI " + roi + " mitochondrial area fraction=" + Area_mito/Area_cell + "; P support areas=" + ValidP_cell + "," + ValidP_mito + "," + ValidP_cyto, FPRM_Results_fname);
 	
 	// Condensed Results String
 	// Cell # -- Cell Area -- Cell centroid X -- Y -- Cell Int -- Cell S/P -- Cell relative free NADH -- CytoMitoRatio (RelativeFreeNADH_cyto/RelativeFreeNADH_mito) -- Mito Area -- Mito Int -- Mito S/P -- Mito relative free NADH -- Cyto Area -- Cyto Int -- Cyto S/P -- Cyto relative free NADH
-	Condensed_str = d2s(roi,0) + "\t" + d2s(Area_cell,0) + "\t" + d2s(Xcentroid,3) + "\t" + d2s(Ycentroid,3) + "\t" + d2s(Icell,0) + "\t" + d2s(SP_cell,3) + "\t" + d2s(RelativeFreeNADH_cell,3) + "\t" + d2s(CMRatio,3) + "\t";
-	Condensed_str = Condensed_str + d2s(Area_mito,0) + "\t" + d2s(Imito,0) + "\t" + d2s(SP_mito,3) + "\t" + d2s(RelativeFreeNADH_mito,3) + "\t";
-	Condensed_str = Condensed_str + d2s(Area_cyto,0) + "\t" + d2s(Icyto,0) + "\t" + d2s(SP_cyto,3) + "\t" + d2s(RelativeFreeNADH_cyto,3);
+	Condensed_str = d2s(roi,0) + "\t" + d2s(Area_cell,9) + "\t" + d2s(Xcentroid,3) + "\t" + d2s(Ycentroid,3) + "\t" + d2s(Icell,0) + "\t" + d2s(SP_cell,3) + "\t" + d2s(RelativeFreeNADH_cell,3) + "\t" + d2s(CMRatio,3) + "\t";
+	Condensed_str = Condensed_str + d2s(Area_mito,9) + "\t" + d2s(Imito,0) + "\t" + d2s(SP_mito,3) + "\t" + d2s(RelativeFreeNADH_mito,3) + "\t";
+	Condensed_str = Condensed_str + d2s(Area_cyto,9) + "\t" + d2s(Icyto,0) + "\t" + d2s(SP_cyto,3) + "\t" + d2s(RelativeFreeNADH_cyto,3);
+	Condensed_str = Condensed_str + "\t" + d2s(Area_mito/Area_cell,6) + "\t" + ValidP_cell + "\t" + ValidP_mito + "\t" + ValidP_cyto + "\t" + RelativeFreeNADH_mito_color + "\t" + RelativeFreeNADH_cyto_color;
+	Condensed_str = Condensed_str + "\t" + areaUnits;
 	File.append(Condensed_str, FPRM_Condensed_Results_fname);
 }
 
@@ -488,6 +480,24 @@ saveAs("Tiff", FPRM_FreeNADH_img_fname);
 selectWindow("RelativeFreeNADH_colormapped");
 saveAs("Tiff", FPRM_FreeNADH_Colormapped_img_fname);
 
+
+// Write structured analysis record only after all maps are saved.
+low = 0; high = 1;
+if (pixel_lim_opt) {
+    low = User_pixel_lims[0]; high = User_pixel_lims[1];
+}
+j = "{\n" + "\"schema_version\":\"1.0\",\n";
+j = j + "\"basename\":" + jsonString(basename) + ",\n";
+j = j + "\"script\":\"FPRM_SingleCellCalculations_AutomatedSegmentation.ijm\",\n";
+j = j + "\"timestamp_ms\":" + d2s(date,0) + ",\n\"user\":" + jsonString(user) + ",\n";
+j = j + "\"SPvit\":" + SPvit + ",\n\"SPfree\":" + SPfree + ",\n";
+j = j + "\"calibration_source\":" + jsonString(calibrationSource) + ",\n";
+j = j + "\"color_limits\":[" + low + "," + high + "],\n\"color_mode\":" + pixel_lim_opt + ",\n";
+j = j + "\"measurement_support\":\"independent_nonzero\",\n\"minimum_P_area\":30,\n";
+j = j + "\"area_units\":" + jsonString(areaUnits) + ",\n";
+j = j + "\"excluded_cells\":[" + excluded + "],\n\"roi_count\":" + n_roi + ",\n";
+j = j + "\"run_suffix\":" + jsonString(suffix) + ",\n\"imagej_version\":" + jsonString(getVersion()) + "\n}";
+File.saveString(j, FPRM_Results_fname);
 
 // Close all windows
 waitForUser("Inspect / Save any images, then press OK to close all windows:");
@@ -527,4 +537,37 @@ function readJSONNumber(json, key) {
         exit("Invalid numeric metadata field: " + key);
     }
     return value;
+}
+
+function addExclusion(existing, roi, reason) {
+    if (lengthOf(existing)>0) {
+        existing = existing + ",";
+    }
+    return existing + "{\"roi\":" + roi + ",\"reason\":" + jsonString(reason) + "}";
+}
+function jsonString(value) {
+    value = replace(value, "\\", "\\\\");
+    value = replace(value, "\"", "\\\"");
+    value = replace(value, "\n", "\\n");
+    value = replace(value, "\r", "\\r");
+    value = replace(value, "\t", "\\t");
+    return "\"" + value + "\"";
+}
+
+function squaredAreaUnit(unit) {
+    if (unit=="pixel" || unit=="pixels" || unit=="px" || unit=="") {
+        return "px";
+    }
+    if (unit=="um" || unit=="µm" || unit=="μm" || unit=="micron" || unit=="microns") {
+        return "um2";
+    }
+    return unit + "2";
+}
+
+function checkSpatialCalibration(title, expectedUnit, expectedWidth, expectedHeight) {
+    selectWindow(title);
+    getPixelSize(u, w, h);
+    if (squaredAreaUnit(u)!=squaredAreaUnit(expectedUnit) || abs(w-expectedWidth)>1e-9*maxOf(abs(w),abs(expectedWidth)) || abs(h-expectedHeight)>1e-9*maxOf(abs(h),abs(expectedHeight))) {
+        exit("Spatial calibration mismatch: " + title + ". Ensure P, S and masks use identical calibration before analysis.");
+    }
 }
